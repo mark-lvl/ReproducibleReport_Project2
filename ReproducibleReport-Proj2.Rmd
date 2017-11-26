@@ -1,0 +1,169 @@
+---
+title: "ReproducibleReport (Project 2)"
+author: "Mark Kaghazgarian"
+date: "11/24/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Loading and Processing the Raw Data
+
+From the **U.S. National Oceanic and Atmospheric Administration's (NOAA)** strom database, we obtained data which tracks characteristics of major storms and weather events in the United States, including `when` and `where` they occur, as well as estimates of any `fatalities`, `injuries`, and `property damage`. The events in the database start in the year **1950** and end in November **2011**.
+
+
+#### Setup the environment
+Before any data analysis, we have to setup our R toolset in terms of installing all the required packages. By running the following code snippet we could make sure which our machine is ready to deal with the entire process of this matter.
+
+```{r packages, echo=TRUE, cache=TRUE, warning=FALSE}
+list.of.packages <- c("data.table", "R.utils", "ggplot2")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) {
+    install.packages(new.packages)
+}
+
+library("data.table")
+library("R.utils")
+library("ggplot2")
+```
+
+#### Reading in the dataset
+
+First, we need to download the dataset file from the following address, The data come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. 
+
+```{r downloadfile, echo=TRUE, cache=TRUE, results='hide'}
+## Download the file and save in current directory
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", "./storm.csv.bz2")
+
+## Read by using data.table fread function and unpack the downloaded file on the fly.
+library(R.utils)
+bunzip2("./storm.csv.bz2", "./storm.csv", remove = FALSE, skip = TRUE)
+
+DT <- fread("./storm.csv")
+```
+
+#### Data Processing
+
+In order to make dataset ready to use for answering the questions, first, we need to cleanup data from redundant or duplicate records for event type attribute:
+
+```{r eventtype, echo=TRUE, cache=TRUE, results='hide'}
+## Standardize event types  
+evtyp <- tolower(DT$EVTYPE)
+evtyp <- gsub("[[:punct:]+[:blank:]]", " ", evtyp)
+DT$EVTYPE <- evtyp
+```
+
+
+## Finding the events which are most harmful with respect to Population Health
+
+We need to group records based on event types and then calculate the sum  of fatalities and injuries in each group, lastly we order the result based on fatalities and inhuries as second level:
+
+```{r harmful_event, echo=TRUE, cache=TRUE}
+## Aggregate records based on different groups of events  
+harmful_event <- DT[,.(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES)), by=EVTYPE]
+
+harmful_event[order(-FATALITIES, -INJURIES)]
+```
+
+As result clearly shows **Tornado** has the damage followed by **Exessive heat** in second place.
+
+Also, we can sum up values of fatalities and injuries to evalute the most harmful event with respect to population health:
+
+```{r total_harmful_event, echo=TRUE, cache=TRUE}
+## Aggregate records based on different groups of events  
+most_harmful <- harmful_event[,.(TOTAL = FATALITIES + INJURIES), by = EVTYPE]
+
+most_harmful[order(-TOTAL)]
+```
+
+As we can see, the result of total damage for first and second record is complately same as before but the events which are located from third to forth are changed.
+
+## Across the United States, which types of events have the greatest economic consequences.
+
+In order to find most devastating kind of storm in the US, we got 4 peace of useful feature of data in dataset which are **PROPDMG** (Property demage), **PROPDMGEXP** (Property damage exponent), **CROPDMG** (Crop damage) and **CROPDMGEXP** (crop damage exponent). To evaluate the cost of damage we need to multiply the exponent to their related values and sum up those values based on each event type.
+
+```{r damage_calc, echo=TRUE, cache=TRUE, warning=FALSE}
+exponent_value <- function(exp) {
+    exp <- tolower(exp)
+    if (exp == 'h') return(2)
+    else if (exp == 'k') return(3)
+    else if (exp == 'm') return(6)
+    else if (exp == 'b') return(9)
+    else if (!is.na(as.numeric(exp))) return(as.numeric(exp))
+    else if (exp %in% c('', '-', '?', '+')) return(0)
+}
+
+## Transform the dataset values for damages regarding to exponent values
+## In the first step for property damage
+prop_exp_digit <- sapply(DT$PROPDMGEXP, FUN=exponent_value)
+DT$property_damage <- DT$PROPDMG * (10 ** prop_exp_digit)
+
+## Doing same for corp damage
+crop_exp_digit <- sapply(DT$CROPDMGEXP, FUN=exponent_value)
+DT$crop_damage <- DT$CROPDMG * (10 ** crop_exp_digit)
+
+## Now we can easily do the same procedure as fatalities counting
+## Grouping based on events type and aggregate damage values.
+total_damages <- DT[,.(Total_property_damage = sum(property_damage), 
+                       Total_crop_damage = sum(crop_damage)), 
+                    by=EVTYPE]
+```
+
+Most devastating type of event based on damage on property factor:
+```{r dmg_prpt, echo=TRUE, cache=TRUE}
+total_damages[order(-Total_property_damage)]
+```
+
+Most devastating type of event based on damage on corp factor:
+```{r dmg_crop, echo=TRUE, cache=TRUE}
+total_damages[order(-Total_crop_damage)]
+```
+
+The most devastating type based on overall damages:
+```{r overall_dmg, echo=TRUE, cache=TRUE}
+total_overal_damage <- total_damages[,.(TOTAL_DAMAGE = Total_property_damage + Total_crop_damage), 
+                                     by = EVTYPE]
+
+total_overal_damage[order(-TOTAL_DAMAGE)]
+```
+
+## Results
+
+#### Most harmful event with respect to population health
+
+By visulazing the aggregated adta we can get better insight about the impact of each kind of event in a simple graph.
+
+```{r plot_result_1, echo=TRUE, cache=TRUE}
+## Filter most harmful datatable to events by having more than 
+## 1000 fatalities and injuries in total.
+most_harmful <- most_harmful[TOTAL > 1000]
+
+ggplot(data=most_harmful,
+       aes(reorder(EVTYPE, TOTAL), TOTAL)) +
+       geom_bar(stat="identity", fill = "blue") +
+       coord_flip() +
+       ylab("Overal fatalities & injuries") +
+       xlab("Type of Event")
+```
+
+The graph easily shows that **Tornado** has the most impact on population health in the US by having almost 10,000 fatalities and injuries in total and followed by head and wind as second and third place.
+
+#### Economic impact
+
+```{r plot_result_2, echo=TRUE, cache=TRUE}
+## Filter total overal damage datatable to events to top 10 total damages
+total_overal_damage <- total_overal_damage[order(-TOTAL_DAMAGE)]
+
+
+ggplot(data=total_overal_damage[1:10],
+       aes(reorder(EVTYPE, TOTAL_DAMAGE), TOTAL_DAMAGE)) +
+       geom_bar(stat="identity", fill = "green") +
+       coord_flip() +
+       ylab("Overal damage cost") +
+       xlab("Type of Event")
+```
+
+The given insight by this graph is that ** Flood** has most devastating type of event followed by **hurricane typhoon** and **tornado** in second and third place.
